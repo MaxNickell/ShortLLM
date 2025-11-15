@@ -9,7 +9,7 @@ class ShortGPTConfig:
     RoPE, transformer blocks) will receive this config object.
     """
     # fixed vocabulary size
-    vocab_size: int = 32
+    vocab_size: int = 23
 
     # Model architecture
     d_model: int = 256  # hidden dimension

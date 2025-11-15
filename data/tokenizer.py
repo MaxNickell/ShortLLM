@@ -7,7 +7,7 @@ class ShortGPTTokenizer:
     """
 
     def __init__(self):
-        # Fixed vocabulary order (exactly 32 tokens)
+        # Fixed vocabulary order (exactly 23 tokens)
         self.tokens = [
             "<EDGE>",
             "<BD>",
@@ -16,8 +16,8 @@ class ShortGPTTokenizer:
             "<START_PATH>",
             "<END_PATH>",
             "<TO>",
-        ] + [str(i) for i in range(25)]  # node identifiers 0–24
-
+        ] + [str(i) for i in range(16)]  # node identifiers 0–15
+        
         # lookup dictionaries
         self.token_to_id = {tok: i for i, tok in enumerate(self.tokens)}
         self.id_to_token = {i: tok for tok, i in self.token_to_id.items()}
