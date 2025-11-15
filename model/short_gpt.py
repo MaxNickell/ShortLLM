@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from config import ShortGPTConfig
+from model.block import TransformerBlock
 
 
 class ShortGPT(nn.Module):
@@ -23,7 +24,7 @@ class ShortGPT(nn.Module):
 
         # Transformer blocks
         self.blocks = nn.ModuleList(
-            []  # WIP
+            [TransformerBlock(config) for _ in range(config.n_layers)]
         )
 
         # Final layer norm
