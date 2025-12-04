@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config import ShortGPTConfig
+from src.config import ShortGPTConfig
 from model.rope import RotaryEmbedding
 
 

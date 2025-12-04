@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from config import ShortGPTConfig
+from src.config import ShortGPTConfig
 from model.block import TransformerBlock
 
 

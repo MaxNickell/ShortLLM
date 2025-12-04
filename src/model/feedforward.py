@@ -1,5 +1,5 @@
 import torch.nn as nn
-from config import ShortGPTConfig
+from src.config import ShortGPTConfig
 
 
 class FeedForward(nn.Module):
