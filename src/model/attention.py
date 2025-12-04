@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.config import ShortGPTConfig
-from model.rope import RotaryEmbedding
+from .rope import RotaryEmbedding
 
 
 class MultiHeadSelfAttention(nn.Module):

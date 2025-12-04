@@ -9,7 +9,7 @@ class ShortGPTConfig:
     RoPE, transformer blocks) will receive this config object.
     """
     # fixed vocabulary size
-    vocab_size: int = 23
+    vocab_size: int = 24
 
     # Model architecture
     d_model: int = 256  # hidden dimension
@@ -18,7 +18,7 @@ class ShortGPTConfig:
     d_ff: int = 1024  # feedforward inner dim
 
     # Token settings
-    max_seq_len: int = 512  # max context window
+    max_seq_len: int = 640 # max context window
     rope_base: int = 10000  # RoPE frequency base
 
     # Regularization

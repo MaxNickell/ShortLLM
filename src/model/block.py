@@ -1,7 +1,7 @@
 import torch.nn as nn
 from src.config import ShortGPTConfig
-from model.attention import MultiHeadSelfAttention
-from model.feedforward import FeedForward
+from .attention import MultiHeadSelfAttention
+from .feedforward import FeedForward
 
 
 class TransformerBlock(nn.Module):
