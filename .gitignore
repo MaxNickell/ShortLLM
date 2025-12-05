@@ -2,3 +2,5 @@
 
 data/processed/*
 data/raw/*
+
+*__pycache__

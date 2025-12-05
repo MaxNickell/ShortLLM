@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from src.config import ShortGPTConfig
 from .block import TransformerBlock
 from src.tokenizer import ShortGPTTokenizer
+from src.rl.reward import compute_path_reward
 
 
 class ShortGPT(nn.Module):
@@ -43,6 +44,7 @@ class ShortGPT(nn.Module):
 
         # Weight tying: token_emb and lm_head share parameters
         self.lm_head.weight = self.token_emb.weight
+
 
     def forward(self, input_ids):
         """
@@ -109,7 +111,6 @@ class ShortGPT(nn.Module):
         num_path_tokens = mask_float.sum()
 
         if num_path_tokens.item() == 0:
-            # Should not happen with your data, but guard anyway
             zero = torch.tensor(0.0, device=logits.device)
             return zero, zero, zero
 
@@ -133,6 +134,7 @@ class ShortGPT(nn.Module):
         lr: float = 3e-4,
         patience: int = 3,
         save_path: Optional[str] = "model1_pretrained.pt",
+        min_delta: float = 1e-3,
     ) -> dict:
         """
         Supervised pretraining for Model 1.
@@ -176,12 +178,10 @@ class ShortGPT(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-                # Accumulate weighted loss and counts for global metrics
                 total_train_loss_weighted += loss.item() * num_tokens.item()
                 total_train_tokens += num_tokens.item()
                 total_train_correct += num_correct.item()
 
-                # Optional intra-epoch logging
                 if batch_idx % 2000 == 0:
                     avg_so_far = total_train_loss_weighted / max(1.0, total_train_tokens)
                     acc_so_far = total_train_correct / max(1.0, total_train_tokens)
@@ -230,7 +230,7 @@ class ShortGPT(nn.Module):
             )
 
             # ---- Early stopping & checkpointing ----
-            if avg_val_loss < best_val_loss - 1e-4:  # small min_delta to avoid noise
+            if avg_val_loss < best_val_loss - min_delta:
                 best_val_loss = avg_val_loss
                 epochs_without_improvement = 0
 
@@ -256,13 +256,7 @@ class ShortGPT(nn.Module):
         max_new_tokens: int = 64,
     ) -> str:
         """
-        Run autoregressive inference on a single (graph, origin, dest) row.
-
-        We:
-          - Build the prompt: graph_repr + <ORIGIN>o<DEST>d + <START_PATH>
-            (we stop before the ground-truth path).
-          - Autoregressively generate tokens until <END_PATH> or max_new_tokens.
-          - Return the generated sequence as a string.
+        Greedy autoregressive inference on a single (graph, origin, dest) row.
         """
         self.eval()
         self.to(device)
@@ -271,7 +265,6 @@ class ShortGPT(nn.Module):
         origin = row["origin"]
         dest = row["destination"]
 
-        # Prompt: graph_repr + <ORIGIN>o<DEST>d + <START_PATH>
         prompt_str = (
             graph_repr
             + "<ORIGIN>" + str(origin)
@@ -279,7 +272,6 @@ class ShortGPT(nn.Module):
             + "<START_PATH>"
         )
 
-        # Tokenize prompt
         input_ids_list = tokenizer.encode_string(prompt_str)
         input_ids = torch.tensor([input_ids_list], dtype=torch.long, device=device)  # (1, T)
 
@@ -289,25 +281,194 @@ class ShortGPT(nn.Module):
                 next_logits = logits[:, -1, :]
                 next_id = torch.argmax(next_logits, dim=-1)
 
-                # Append next token
                 input_ids = torch.cat(
                     [input_ids, next_id.unsqueeze(0)], dim=1
-                )  # (1, T+1)
+                )
 
-                # Check if we hit <END_PATH>
                 next_token_str = tokenizer.decode([next_id.item()])[0]
                 if next_token_str == "<END_PATH>":
                     break
 
-                # Optional safety: don't exceed model's context window
                 if input_ids.size(1) >= self.config.max_seq_len:
                     break
 
-        # Decode full sequence back to tokens
         full_token_ids = input_ids[0].tolist()
         full_tokens = tokenizer.decode(full_token_ids)
-
-        # Join back to string (you can customize formatting)
         generated_str = "".join(full_tokens)
         return generated_str
 
+
+    def sample_path_and_logprobs(
+        self,
+        tokenizer: ShortGPTTokenizer,
+        row: dict,
+        device: torch.device,
+        max_new_tokens: int = 64,
+        temperature: float = 1.0,
+    ) -> (str, torch.Tensor):
+        """
+        Stochastically sample a path (for RL) and return:
+          - generated_str: full decoded sequence (graph + path)
+          - logprobs: 1D tensor of log π(a_t | s_t) for each generated token
+                      in the path segment (nodes, <TO>, <END_PATH>).
+
+        We still build the same prompt as generate_path, but instead of
+        greedy argmax, we sample from the softmax distribution.
+        """
+        self.eval()
+        self.to(device)
+
+        graph_repr = row["graph_repr"]
+        origin = row["origin"]
+        dest = row["destination"]
+
+        prompt_str = (
+            graph_repr
+            + "<ORIGIN>" + str(origin)
+            + "<DEST>" + str(dest)
+            + "<START_PATH>"
+        )
+
+        # Build prompt ids
+        input_ids_list = tokenizer.encode_string(prompt_str)
+        input_ids = torch.tensor([input_ids_list], dtype=torch.long, device=device)  # (1, T)
+
+        logprobs: List[torch.Tensor] = []
+
+        for _ in range(max_new_tokens):
+            logits = self(input_ids)                # (1, T, V)
+            next_logits = logits[:, -1, :]          # (1, V)
+
+            if temperature != 1.0:
+                next_logits = next_logits / temperature
+
+            probs = torch.softmax(next_logits, dim=-1)   # (1, V)
+            dist = torch.distributions.Categorical(probs=probs)
+            next_id = dist.sample()                      # (1,)
+            logprob = dist.log_prob(next_id).squeeze(0)  # scalar
+
+            logprobs.append(logprob)
+
+            # Append next token
+            input_ids = torch.cat(
+                [input_ids, next_id.unsqueeze(0)], dim=1
+            )  # (1, T+1)
+
+            # Check for END_PATH and context window
+            next_token_str = tokenizer.decode([next_id.item()])[0]
+            if next_token_str == "<END_PATH>":
+                break
+            if input_ids.size(1) >= self.config.max_seq_len:
+                break
+
+        # Decode full sequence
+        full_token_ids = input_ids[0].tolist()
+        full_tokens = tokenizer.decode(full_token_ids)
+        generated_str = "".join(full_tokens)
+
+        if len(logprobs) == 0:
+            # No tokens generated after <START_PATH>; treat as zero logprob
+            return generated_str, torch.zeros(1, device=device)
+
+        logprobs_tensor = torch.stack(logprobs, dim=0)  # (L_gen,)
+        return generated_str, logprobs_tensor
+
+    def fit_rl(
+        self,
+        train_rows: list,
+        tokenizer: ShortGPTTokenizer,
+        device: torch.device,
+        num_epochs: int = 1,
+        steps_per_epoch: int = 1000,
+        batch_size: int = 32,
+        lr: float = 1e-5,
+        max_new_tokens: int = 64,
+        temperature: float = 1.0,
+    ) -> dict:
+        """
+        REINFORCE-style RL finetuning (Model 2).
+
+        Args:
+          train_rows: list of dataset row dicts (e.g., train_ds.rows)
+          tokenizer: tokenizer
+          device: torch.device
+          num_epochs: how many RL epochs
+          steps_per_epoch: how many gradient steps per epoch
+          batch_size: how many trajectories per step
+          lr: RL learning rate (often smaller than supervised lr)
+          max_new_tokens: max path tokens to generate
+          temperature: sampling temperature
+
+        Returns:
+          history dict with average reward per step/epoch.
+        """
+        import random
+
+        self.to(device)
+        self.train()
+        optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
+
+        history = {
+            "avg_reward_per_step": [],
+        }
+
+        n = len(train_rows)
+
+        for epoch in range(1, num_epochs + 1):
+            print(f"=== RL Epoch {epoch}/{num_epochs} ===")
+            epoch_rewards = []
+
+            for step in range(1, steps_per_epoch + 1):
+                # Sample a batch of rows
+                batch_rows = [train_rows[random.randint(0, n - 1)] for _ in range(batch_size)]
+
+                batch_logprob_sums = []
+                batch_rewards = []
+
+                for row in batch_rows:
+                    # 1) Sample a path + logprobs
+                    generated_str, logprobs = self.sample_path_and_logprobs(
+                        tokenizer=tokenizer,
+                        row=row,
+                        device=device,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                    )
+
+                    # 2) Compute reward in [0,1]
+                    R = compute_path_reward(row, generated_str, tokenizer)
+                    batch_rewards.append(R)
+
+                    # Sum logprobs over the generated path tokens
+                    batch_logprob_sums.append(logprobs.sum())
+
+                # Convert to tensors
+                rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device)  # (B,)
+                logprob_sums_t = torch.stack(batch_logprob_sums, dim=0)                      # (B,)
+
+                # Compute advantages by centering the rewards
+                baseline = rewards_t.mean()
+                advantages = rewards_t - baseline  # (B,)
+
+                # REINFORCE loss: - E[ A * sum_log_prob ]
+                loss = -(advantages * logprob_sums_t).mean()
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                avg_reward = rewards_t.mean().item()
+                history["avg_reward_per_step"].append(avg_reward)
+                epoch_rewards.append(avg_reward)
+
+                if step % 100 == 0:
+                    print(
+                        f"RL Epoch {epoch} - step {step}/{steps_per_epoch} "
+                        f"- avg reward (this step): {avg_reward:.4f} "
+                        f"- baseline: {baseline.item():.4f}"
+                    )
+
+            mean_epoch_reward = sum(epoch_rewards) / max(1, len(epoch_rewards))
+            print(f"End of RL epoch {epoch}: mean reward = {mean_epoch_reward:.4f}")
+
+        return history
