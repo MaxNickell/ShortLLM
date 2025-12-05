@@ -183,12 +183,10 @@ class GraphPathCollator:
         self.pad_token_id = pad_token_id
 
     def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        # batch is a list of dicts from GraphPathDataset.__getitem__
         batch_size = len(batch)
         lengths = [item["length"].item() for item in batch]
         max_len = max(lengths)
 
-        # Initialize tensors with PAD
         input_ids = torch.full(
             (batch_size, max_len),
             fill_value=self.pad_token_id,
