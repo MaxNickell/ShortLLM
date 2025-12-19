@@ -31,12 +31,12 @@ def main():
     print(f"Loaded model from {args.checkpoint}")
 
     # Load data with SAME splits as pretraining
-    train_rows, _, _ = get_splits(args.data, data_config)
-    print(f"Training on {len(train_rows)} examples")
+    train_rows, val_rows, _ = get_splits(args.data, data_config)
+    print(f"Training on {len(train_rows)} examples, validating on {len(val_rows)} examples")
 
-    # Train
+    # Train with early stopping
     trainer = RLTrainer(model, rl_config, tokenizer, device)
-    trainer.train(train_rows)
+    trainer.train(train_rows, val_rows)
 
     print(f"Done. Checkpoint saved to {rl_config.save_path}")
 

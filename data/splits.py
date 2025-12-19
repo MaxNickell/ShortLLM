@@ -7,7 +7,7 @@ Both pretraining and RL must use this to ensure they see the same data splits.
 import json
 import random
 from math import floor
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, DefaultDict
 
 from src.config import DataConfig
 
@@ -70,3 +70,52 @@ def get_splits(
     print(f"Split sizes - Total: {len(rows)}, Train: {len(train_rows)}, Val: {len(val_rows)}, Test: {len(test_rows)}")
 
     return train_rows, val_rows, test_rows
+
+
+def get_stratified_subset(
+    rows: List[Dict[str, Any]],
+    n: int,
+    seed: int = 42,
+) -> List[Dict[str, Any]]:
+    """
+    Get a stratified subset of rows, uniformly distributed across
+    (num_nodes, shortest_path_length) strata.
+
+    Args:
+        rows: List of data rows
+        n: Target subset size
+        seed: Random seed for reproducibility
+
+    Returns:
+        Stratified subset of approximately n rows
+    """
+    from collections import defaultdict
+
+    rng = random.Random(seed)
+
+    # Group by (num_nodes, shortest_path_length)
+    strata: Dict[Tuple[int, int], List[Dict]] = defaultdict(list)
+    for row in rows:
+        key = (row["num_nodes"], row["shortest_path_length"])
+        strata[key].append(row)
+
+    # Calculate samples per stratum (uniform across strata)
+    num_strata = len(strata)
+    base_per_stratum = n // num_strata
+    remainder = n % num_strata
+
+    # Sample from each stratum
+    subset = []
+    stratum_keys = sorted(strata.keys())
+    rng.shuffle(stratum_keys)  # Randomize which strata get extra samples
+
+    for i, key in enumerate(stratum_keys):
+        stratum_rows = strata[key]
+        # First 'remainder' strata get one extra sample
+        target = base_per_stratum + (1 if i < remainder else 0)
+        # Sample min(target, available) from this stratum
+        sample_size = min(target, len(stratum_rows))
+        subset.extend(rng.sample(stratum_rows, sample_size))
+
+    rng.shuffle(subset)
+    return subset

@@ -44,8 +44,8 @@ class PretrainConfig:
 @dataclass
 class RLConfig:
     """RL finetuning hyperparameters."""
-    num_epochs: int = 1
-    steps_per_epoch: int = 1000
+    num_epochs: int = 10
+    steps_per_epoch: int = 5000
     batch_size: int = 32
     lr: float = 1e-5
     weight_decay: float = 0.01
@@ -53,6 +53,13 @@ class RLConfig:
     max_new_tokens: int = 64
     temperature: float = 1.0
     use_baseline: bool = True
+
+    # Evaluation and early stopping
+    eval_every: int = 500           # Evaluate every N steps
+    eval_samples: int = 500         # Stratified val subset size
+    patience: int = 5               # Stop after N evals without improvement
+    min_delta: float = 0.01         # Minimum avg_reward improvement
+
     log_every: int = 100
-    save_path: str = "checkpoints/rl_finetuned.pt"
-    log_path: str = "logs/rl.jsonl"
+    save_path: str = "checkpoints/rl_finetuned-2.pt"
+    log_path: str = "logs/rl-2.jsonl"
