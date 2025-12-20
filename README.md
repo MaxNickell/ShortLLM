@@ -73,5 +73,5 @@ Edit `src/config.py` to modify hyperparameters:
 ├── data/
 │   ├── dataset.py         # PyTorch dataset
 │   └── splits.py          # Consistent train/val/test splitting
-└── scripts/               # Evaluation and plotting utilities
+└── scripts/               # Evaluation, plotting, and dataset generation utilities
 ```
